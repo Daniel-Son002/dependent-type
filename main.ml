@@ -3,7 +3,7 @@ type term =
     | Pi of term * (term -> term)
     | Appl of term * term
     | Ann of term * term
-    | FreeVar of intoh what 
+    | FreeVar of int
     | Star
     | Box
 
@@ -12,11 +12,11 @@ type lterm =
     | LLam of string * lterm
     | LApp of lterm * lterm
 
-(* module LambdaParse = struct
+module LambdaParse = struct
     let lexer = Genlex.make_lexer["("; ")"; "."; "/"]
 
     let lex s =
-        let  *)
+        let 
 
 type nat =
     | Zero
@@ -34,7 +34,7 @@ type nat_type =
 let rec eval_nat n =
     match n with
     | Zero -> Zero
-    | Succ n' -> Succ (eval_nate n')
+    | Succ n' -> Succ (eval_nat n')
 
 let rec elim_nat f base step n =
     match n with
