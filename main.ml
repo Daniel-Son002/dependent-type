@@ -1,90 +1,145 @@
-type term =
-    | Lam of (term -> term)
-    | Pi of term * (term -> term)
-    | Appl of term * term
-    | Ann of term * term
-    | FreeVar of int
-    | Star
-    | Box
+module StringSet = Set.Make(String)
 
-type lterm = 
-    | LId of string
-    | LLam of string * lterm
-    | LApp of lterm * lterm
+type expr =
+  | Var of string
+  | Star
+  | Pi of string * expr * expr
+  | Lam of string * expr * expr
+  | App of expr * expr
+  | NatConst
+  | Zero
+  | Succ of expr
+  | ElimNat of expr * expr * expr * expr
 
-module LambdaParse = struct
-    let lexer = Genlex.make_lexer["("; ")"; "."; "/"]
+(* Alpha-equivalence check *)
+(* let rec alpha_equiv e1 e2 =
+  match (e1, e2) with
+  | (Var x1, Var x2) -> x1 = x2
+  | (Lam (x1, t1, body1), Lam (x2, t2, body2)) ->
+      alpha_equiv t1 t2 && alpha_equiv (rename x1 x2 body1) body2
+  | (App (f1, a1), App (f2, a2)) -> alpha_equiv f1 f2 && alpha_equiv a1 a2
+  | (Succ e1', Succ e2') -> alpha_equiv e1' e2'
+  | (ElimNat (n1, z1, s1, p1), ElimNat (n2, z2, s2, p2)) ->
+      alpha_equiv n1 n2 && alpha_equiv z1 z2 && alpha_equiv s1 s2 && alpha_equiv p1 p2
+  | _ -> false *)
 
-    let lex s =
-        let 
+(* Rename variables to avoid capture *)
+let rec rename old new_name e =
+  match e with
+  | Var x -> if x = old then Var new_name else Var x
+  | Lam (x, t, body) ->
+      let new_var = if x = old then new_name else x in
+      Lam (new_var, t, rename old new_name body)
+  | App (f, a) -> App (rename old new_name f, rename old new_name a)
+  | Succ e' -> Succ (rename old new_name e')
+  | ElimNat (n, z, s, p) ->
+      ElimNat (rename old new_name n, rename old new_name z, rename old new_name s, rename old new_name p)
+  | _ -> e
 
-type nat =
-    | Zero
-    | Succ of nat
+(* Free variables extraction *)
+let rec free_vars e =
+  match e with
+  | Var x -> StringSet.singleton x
+  | Pi (x, e1, e2) -> StringSet.union (free_vars e1) (StringSet.remove x (free_vars e2))
+  | Lam (x, _, body) -> StringSet.remove x (free_vars body)
+  | App (f, a) -> StringSet.union (free_vars f) (free_vars a)
+  | Succ e' -> free_vars e'
+  | ElimNat (n, z, s, p) ->
+      StringSet.union (free_vars n) (StringSet.union (free_vars z) (StringSet.union (free_vars s) (free_vars p)))
+  | _ -> StringSet.empty
 
-type ('a, 'b) pi =
-    | Lam : ('a -> 'b) -> ('a, 'b) pi
-    | App : ('a, 'b) pi -> 'a -> 'b
+(* Capture avoiding substitution *)
+let rec subst x e s =
+  match s with
+  | Var y -> if x = y then e else Var y
+  | Lam (y, t, body) ->
+      let body' = if x = y then body else subst x e body in
+      Lam (y, t, body')
+  | App (f, a) -> App (subst x e f, subst x e a)
+  | Succ e' -> Succ (subst x e e')
+  | ElimNat (n, z, s', p) ->
+      ElimNat (subst x e n, subst x e z, subst x e s', subst x e p)
+  | _ -> s
 
-type nat_type =
-    | TNat
-    | TZero
-    | TSucc of nat_type
+type abbs = (string * expr) list
 
-let rec eval_nat n =
-    match n with
-    | Zero -> Zero
-    | Succ n' -> Succ (eval_nat n')
+let rec normal_form_abbs (abbs:abbs) (t:expr):expr =
+    match abbs with
+    | (x, e) :: tl -> normal_form_abbs tl (subst x e t)
+    | [] -> t
+    
+let rec eval_step e =
+  match e with
+  | App (Lam (x, _, e1), e2) -> subst x e2 e1 
+  | App (f, a) -> 
+    let f' = eval_step f in
+    if f' = f then App (f, eval_step a) else App (f', a)
+  | Lam (x, t, body) -> 
+    Lam (x, t, eval_step body)
+  | Succ e' -> 
+    let e'' = eval_step e' in
+    if e'' = e' then Succ e' else Succ e''
+  | ElimNat (Zero, z, _, _) -> z 
+  | ElimNat (Succ n', z, s, p) -> App ((App (s, n')), (ElimNat (n', z, s, p)))
+  | ElimNat (n, z, s, p) ->
+    let n' = eval_step n in
+    if n' = n then ElimNat (n, z, s, p) else ElimNat (n', z, s, p)
+  | Pi (x, t1, t2) ->
+    let t1' = eval_step t1 in
+    let t2' = eval_step t2 in
+    if t1 = t1' && t2 = t2' then Pi (x, t1, t2)
+    else Pi (x, t1', t2')
+  | _ -> e
+  
 
-let rec elim_nat f base step n =
-    match n with
-    | Zero -> base
-    | Succ n' -> step n' (elim_nat f base step n')
+let rec eval_complete e = 
+  let e' = eval_step e in
+  if e' = e then
+    e
+  else
+    eval_complete e'
 
-let id_fun : ('a, ('a, 'a) pi) pi =
-    Lam (fun n -> Lam (fun m -> m))
+let rec print e =
+  match e with
+  | Var x -> Printf.sprintf "Var(%s)" x
+  | Star -> "Star"
+  | NatConst -> "Nat"
+  | Zero -> "Zero"
+  | Pi (x, t1, t2) -> Printf.sprintf "Pi(%s, %s, %s)" x (print t1) (print t2)
+  | Lam (x, t1, e2) -> Printf.sprintf "Lambda(%s, %s, %s)" x (print t1) (print e2)
+  | App (e1, e2) -> Printf.sprintf "App(%s, %s)" (print e1) (print e2)
+  | Succ e1 -> Printf.sprintf "Succ(%s)" (print e1)
+  | ElimNat (e1, e2, e3, e4) -> Printf.sprintf "ElimNat(%s, %s, %s, %s)" (print e1) (print e2) (print e3) (print e4)
 
-let rec free_variables t =
-    match t with
-    | LId x -> [x]
-    | LLam (x, t) -> remove (free_variables t) x
-    | LApp (t1, t2) -> union (free_variables t1) (free_variables t2) ;;
+let () =
+  Printf.printf "Show: %s\n" (print (App (Lam ("x", NatConst, Var "x"), Zero)))
 
-let rec substitute (m:lterm) (s:string) (n:lterm):lterm =
-    let p = LambdaParser.parse in
-    let pp = LambdaParser.pp in
-    let num = ref(0) in
-    let gensym (s: string) : string =
-        let name = s ^"_"^ string_of_int !num in
-        num := !num + 1;
-        name in
-    match m with
-    | LId y -> if (s = pp m) then n else m
-    | LApp(t1, t2) -> LApp((substitute t1 s n), (substitute t2 s n))
-    | LLam(y, t') -> if (y = s) then m else
-                     if (not (List.mem y (free_variables n))) then LLam(y, (substitute t' s n)) else
-                     let new_var = gensym y in
-                     LLam(new_var, (substitute(substitute t' y (p new_var)) s n)) ;;
+let add_expr = 
+  Lam ("a", NatConst,
+  Lam ("b", NatConst,
+  ElimNat (Var "a", 
+    Var "b", 
+    Lam ("a'", NatConst, Lam ("_", NatConst, Succ (App (App (Var "add", Var "a'"), Var "b")))),
+    Var "a"
+  )
+  )
+)
 
-let rec reduce (t:lterm):lterm option =
-    match t with
-    | LLam(x, t') -> (match reduce t' with
-                      | Some t'' -> Some(LLam(x, t''))
-                      | None -> None)
-    | LApp(LLam(x, t1), t2) -> Some(substitute t1 x t2)
-    | LApp(t1, t2) -> (match reduce t1 with
-                       | Some t1' -> Some(LApp(t1', t2))
-                       | None -> None)
-    | _ -> None
-;;
-
-let rec normal_form (t:lterm):lterm = 
-    match reduce t with
-    | Some t' -> normal_form t'
-    | None -> t
-;;
-
-let eval (input:string):string =
-    let term = LambdaParser.parse input in
-    LambdaParser.pp (normal_form term)
-
+let comm_add_expr = 
+  Lam ("a", NatConst,
+    Lam ("b", NatConst,
+    ElimNat (Var "a", 
+      App (App (Var "add", Var "b"), Zero),
+      Lam ("a'", NatConst, 
+      Lam ("_", NatConst, 
+          App (Succ (App (App (Var "add", Var "b"), Var "a'")), Var "b")
+      )
+      ),
+      Var "a"
+  )
+  )
+)
+  
+let () = 
+  let expr = App (App (comm_add_expr, Zero), Succ Zero) in
+  Printf.printf "Show: %s\n" (print expr)
