@@ -12,19 +12,19 @@ class Star:
 @dataclass
 class Pi:
     var: str
-    domain: 'Expr'
-    codomain: 'Expr'
+    fst: 'Expr'
+    snd: 'Expr'
 
 @dataclass
 class Lam:
     var: str
-    domain: 'Expr'
-    body: 'Expr'
+    fst: 'Expr'
+    snd: 'Expr'
 
 @dataclass
 class App:
-    func: 'Expr'
-    arg: 'Expr'
+    f: 'Expr'
+    e1: 'Expr'
 
 @dataclass
 class Nat:
